@@ -39,6 +39,13 @@ io.on('connection', (socket) => {
     connectedUsers[userId].push(socket.id);
     console.log(`User ID ${userId} is Live! (Tabs open: ${connectedUsers[userId].length})`);
   });
+  // 🟢 NAYA CODE: Check karo ki dost pehle se online toh nahi hai?
+  socket.on('check_user_status', (friendId) => {
+    // Agar dost online hai kisi bhi tab me
+    if (connectedUsers[friendId] && connectedUsers[friendId].length > 0) {
+      socket.emit('online_status_update', { userId: friendId, status: 'online' });
+    }
+  });
 
 
   // ==========================================
