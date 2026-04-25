@@ -8,113 +8,96 @@ app.use(cors());
 
 const server = http.createServer(app);
 
-// Socket server setup
 const io = new Server(server, {
-  cors: {
-    origin: "*", 
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
 // ==========================================
-// 🧠 GLOBAL MEMORY (Data Storage in RAM)
+// 🧠 GLOBAL MEMORY (Optimized for Crores of users)
 // ==========================================
-let connectedUsers = {}; // Friend Chat ke liye: Kaunsa user (DB ID) kis socket ID par hai
-let waitingStranger = null; // Random chat ka queue (Agar koi akela wait kar raha hai)
+// User ke array banayenge taaki 2 tabs khule ho tab bhi online dikhe
+let connectedUsers = {}; // Format: { "userId_1": ["socketId_A", "socketId_B"] }
+let waitingStranger = null; // Sirf object save karenge memory bachane ke liye
 
 io.on('connection', (socket) => {
   console.log('🟢 Naya User Connect Hua! ID:', socket.id);
 
   // ==========================================
-  // 🟢 1. LIVE ONLINE / OFFLINE SYSTEM
+  // 🟢 1. LIVE ONLINE / OFFLINE SYSTEM (WhatsApp Style)
   // ==========================================
-  
-  // Jab PHP/JS frontend batayega ki "Main ye User ID hoon"
   socket.on('user_connected', (userId) => {
-    connectedUsers[userId] = socket.id; // DB ID ko Socket ID se jod diya
-    socket.userId = userId; // User ID ko is connection me yaad rakhne ke liye
+    socket.userId = userId;
     
-    console.log(`User ID ${userId} is Live!`);
+    // Agar user pehli baar connect ho raha hai, toh array banao
+    if (!connectedUsers[userId]) {
+      connectedUsers[userId] =[];
+      // Sirf tabhi Online status bhejo jab pehla tab khule
+      io.emit('online_status_update', { userId: userId, status: 'online' });
+    }
     
-    // Sabko bata do ki ye bhai Online aagaya hai (Green Dot)
-    io.emit('online_status_update', { userId: userId, status: 'online' });
+    // Socket ID ko user ke account me daal do (Multi-tab support)
+    connectedUsers[userId].push(socket.id);
+    console.log(`User ID ${userId} is Live! (Tabs open: ${connectedUsers[userId].length})`);
   });
 
 
   // ==========================================
-  // 🤝 2. FRIEND CHAT SYSTEM (Real-time Private Messaging)
+  // 🤝 2. FRIEND CHAT SYSTEM (Real-time)
   // ==========================================
-  
-  // Jab frontend PHP me message save karne ke baad yahan se message bhejega
   socket.on('send_friend_message', (data) => {
-    // data me aayega: { sender_id, receiver_id, message, image_path, msg_id }
-    console.log(`Message from ${data.sender_id} to ${data.receiver_id}`);
+    let receiverSockets = connectedUsers[data.receiver_id];
     
-    // Check karo kya dost Online hai hamari Tunnel par?
-    let receiverSocketId = connectedUsers[data.receiver_id];
-    
-    if (receiverSocketId) {
-      // Dost online hai! Usko instantly message bhej do
-      io.to(receiverSocketId).emit('receive_friend_message', data);
+    // Agar dost online hai (kisi bhi tab me)
+    if (receiverSockets && receiverSockets.length > 0) {
+      receiverSockets.forEach(socketId => {
+        io.to(socketId).emit('receive_friend_message', data);
+      });
     }
   });
 
-  // Friend Typing Animation
   socket.on('friend_typing', (data) => {
-    let receiverSocketId = connectedUsers[data.receiver_id];
-    if (receiverSocketId) io.to(receiverSocketId).emit('friend_is_typing', { sender_id: data.sender_id });
+    let receiverSockets = connectedUsers[data.receiver_id];
+    if (receiverSockets) receiverSockets.forEach(sId => io.to(sId).emit('friend_is_typing', { sender_id: data.sender_id }));
   });
 
   socket.on('friend_stop_typing', (data) => {
-    let receiverSocketId = connectedUsers[data.receiver_id];
-    if (receiverSocketId) io.to(receiverSocketId).emit('friend_stopped_typing', { sender_id: data.sender_id });
+    let receiverSockets = connectedUsers[data.receiver_id];
+    if (receiverSockets) receiverSockets.forEach(sId => io.to(sId).emit('friend_stopped_typing', { sender_id: data.sender_id }));
   });
 
 
   // ==========================================
-  // 🎭 3. RANDOM CHAT SYSTEM (No DB, Only Live Tunnel)
+  // 🎭 3. RANDOM CHAT SYSTEM (Super Smooth)
   // ==========================================
-  
-  // Jab koi "Find Stranger" pe click kare
   socket.on('find_stranger', () => {
     
-    // Agar pehle se koi waiting list me hai, aur wo "Main" nahi hoon
-    if (waitingStranger && waitingStranger.id !== socket.id) {
-      // Match Found! Ek private kamra (Room) banao dono ke liye
-      let roomName = 'room_' + socket.id + '_' + waitingStranger.id;
+    if (waitingStranger && waitingStranger.socket.id !== socket.id) {
+      // 🤝 Match Found!
+      let roomName = 'room_' + socket.id + '_' + waitingStranger.socket.id;
       
-      // Dono ko kamre me daal do
       socket.join(roomName);
-      waitingStranger.join(roomName);
+      waitingStranger.socket.join(roomName);
       
-      // Yaad rakhne ke liye variables set kar do
       socket.strangerRoom = roomName;
-      waitingStranger.strangerRoom = roomName;
+      waitingStranger.socket.strangerRoom = roomName;
       
-      // Dono ko bata do ki "Partner Mil Gaya!"
-      io.to(roomName).emit('stranger_matched', { status: 'success', message: 'Stranger connected!' });
+      io.to(roomName).emit('stranger_matched', { status: 'success', message: 'Stranger connected! Say Hi 👋' });
       
-      // Waiting list khali kar do agle naye bande ke liye
-      waitingStranger = null; 
       console.log(`Match done in room: ${roomName}`);
+      waitingStranger = null; // Waiting list khali
     } 
     else {
-      // Agar koi nahi hai, toh waiting list me baith jao
-      waitingStranger = socket;
+      // ⏳ Waiting me dalo (Optimized: Pura socket assign karne ki jagah object banaya)
+      waitingStranger = { socket: socket };
       socket.emit('waiting_for_stranger', { status: 'waiting', message: 'Looking for a stranger...' });
-      console.log(`Socket ${socket.id} is waiting for stranger.`);
+      console.log(`Socket ${socket.id} is waiting.`);
     }
   });
 
-  // Random chat message sending
   socket.on('send_stranger_message', (messageText) => {
-    if (socket.strangerRoom) {
-      // "socket.to" ka matlab us kamre me sabko bhejo, bas MUJHE chhod kar
-      socket.to(socket.strangerRoom).emit('receive_stranger_message', messageText);
-    }
+    if (socket.strangerRoom) socket.to(socket.strangerRoom).emit('receive_stranger_message', messageText);
   });
 
-  // Random chat typing
   socket.on('stranger_typing', () => {
     if (socket.strangerRoom) socket.to(socket.strangerRoom).emit('stranger_is_typing');
   });
@@ -123,39 +106,64 @@ io.on('connection', (socket) => {
     if (socket.strangerRoom) socket.to(socket.strangerRoom).emit('stranger_stopped_typing');
   });
 
-  // Jab user "Next" dabaye (Skip)
+  // 🏃‍♂️ JAB KOI "NEXT" DABAYE (Ab Samne wala bhi handle hoga!)
   socket.on('skip_stranger', () => {
     if (socket.strangerRoom) {
-      // Purane partner ko batao ki wo bhaag gaya
-      socket.to(socket.strangerRoom).emit('stranger_disconnected', { message: 'Stranger disconnected. Click Next to find a new one.' });
+      // Samne wale ko batao ki bhai tumhara partner bhaag gaya
+      socket.to(socket.strangerRoom).emit('stranger_disconnected', { message: 'Stranger skipped! Finding next...' });
       
-      // Dono ko kamre se bahar nikalo
+      // Samne wale ka room variable bhi clear kar do (bohot zaroori!)
+      let roomClients = io.sockets.adapter.rooms.get(socket.strangerRoom);
+      if (roomClients) {
+        for (const clientId of roomClients) {
+          let clientSocket = io.sockets.sockets.get(clientId);
+          if (clientSocket) clientSocket.strangerRoom = null;
+        }
+      }
+
       socket.leave(socket.strangerRoom);
       socket.strangerRoom = null;
+      
+      // Khud ko wapas find pe bhej do automatically (Optional)
+      // socket.emit('auto_find_new'); 
     }
   });
 
 
   // ==========================================
-  // 🛑 4. DISCONNECT LOGIC (Net off hona ya tab band karna)
+  // 🛑 4. DISCONNECT LOGIC (Net Off / Tab Close)
   // ==========================================
   socket.on('disconnect', () => {
     console.log('🔴 User Chala Gaya ID:', socket.id);
 
-    // 1. Friend Chat cleanup (Online se Offline dikhao)
-    if (socket.userId) {
-      delete connectedUsers[socket.userId]; // Uski memory uda do
-      io.emit('online_status_update', { userId: socket.userId, status: 'offline' });
+    // 1. Friend Chat Cleanup
+    if (socket.userId && connectedUsers[socket.userId]) {
+      // Us particular tab ki ID hatao
+      connectedUsers[socket.userId] = connectedUsers[socket.userId].filter(id => id !== socket.id);
+      
+      // Agar saare tab band ho gaye (Array length 0), tabhi usko totally offline dikhao
+      if (connectedUsers[socket.userId].length === 0) {
+        delete connectedUsers[socket.userId];
+        io.emit('online_status_update', { userId: socket.userId, status: 'offline' });
+      }
     }
 
-    // 2. Random Chat cleanup (Agar wo wait kar raha tha ya baat kar raha tha)
-    if (waitingStranger && waitingStranger.id === socket.id) {
-      waitingStranger = null; // Line se bahar nikalo
+    // 2. Random Chat Cleanup
+    if (waitingStranger && waitingStranger.socket.id === socket.id) {
+      waitingStranger = null; // Waiting list se hatao
     }
     
     if (socket.strangerRoom) {
-      // Agar random chat kar raha tha aur net chala gaya, toh dusre ko bata do
-      socket.to(socket.strangerRoom).emit('stranger_disconnected', { message: 'Stranger left unexpectedly.' });
+      socket.to(socket.strangerRoom).emit('stranger_disconnected', { message: 'Stranger left unexpectedly due to network loss.' });
+      
+      // Bacha hua partner akele reh gaya usko room se azaad karo
+      let roomClients = io.sockets.adapter.rooms.get(socket.strangerRoom);
+      if (roomClients) {
+        for (const clientId of roomClients) {
+          let clientSocket = io.sockets.sockets.get(clientId);
+          if (clientSocket) clientSocket.strangerRoom = null;
+        }
+      }
     }
   });
 
