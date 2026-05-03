@@ -1,4 +1,4 @@
-const express = require('express');
+require express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
@@ -16,8 +16,8 @@ const io = new Server(server, {
 // 🧠 GLOBAL MEMORY (Optimized for Crores of users)
 // ==========================================
 // User ke array banayenge taaki 2 tabs khule ho tab bhi online dikhe
-let connectedUsers = {}; // Format: { "userId_1": ["socketId_A", "socketId_B"] }
-let waitingStranger = null; // Sirf object save karenge memory bachane ke liye
+let connectedUsers = {}; // Format: { "userId_1": ["socketId_A", "socketId_B"] let
+let waitingQueue = [];// Sirf object save karenge memory bachane ke liye
 
 io.on('connection', (socket) => {
   console.log('🟢 Naya User Connect Hua! ID:', socket.id);
