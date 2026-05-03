@@ -13,49 +13,44 @@ const io = new Server(server, {
 });
 
 // ==========================================
-// 🧠 GLOBAL MEMORY (Optimized for Crores of users)
+// 🧠 SUPER OPTIMIZED GLOBAL MEMORY 
 // ==========================================
-// User ke array banayenge taaki 2 tabs khule ho tab bhi online dikhe
-let connectedUsers = {}; // Format: { "userId_1": ["socketId_A", "socketId_B"] let
-let waitingQueue = [];// Sirf object save karenge memory bachane ke liye
+let connectedUsers = {}; // Friend chat ke liye (Multi-tab support)
+
+// 🔥 Galti Sudhari: Array ki jagah 'Set' use kiya. 
+// Set me lakho users ko add/remove karna instantly hota hai (O(1) time complexity)
+let waitingQueue = new Set(); 
 
 io.on('connection', (socket) => {
   console.log('🟢 Naya User Connect Hua! ID:', socket.id);
 
   // ==========================================
-  // 🟢 1. LIVE ONLINE / OFFLINE SYSTEM (WhatsApp Style)
+  // 🟢 1. LIVE ONLINE / OFFLINE SYSTEM (Friend Chat)
   // ==========================================
   socket.on('user_connected', (userId) => {
     socket.userId = userId;
     
-    // Agar user pehli baar connect ho raha hai, toh array banao
     if (!connectedUsers[userId]) {
-      connectedUsers[userId] =[];
-      // Sirf tabhi Online status bhejo jab pehla tab khule
+      connectedUsers[userId] = new Set(); // Yaha bhi Set use kiya fast speed ke liye
       io.emit('online_status_update', { userId: userId, status: 'online' });
     }
     
-    // Socket ID ko user ke account me daal do (Multi-tab support)
-    connectedUsers[userId].push(socket.id);
-    console.log(`User ID ${userId} is Live! (Tabs open: ${connectedUsers[userId].length})`);
+    connectedUsers[userId].add(socket.id);
+    console.log(`User ID ${userId} is Live!`);
   });
-  // 🟢 NAYA CODE: Check karo ki dost pehle se online toh nahi hai?
+
   socket.on('check_user_status', (friendId) => {
-    // Agar dost online hai kisi bhi tab me
-    if (connectedUsers[friendId] && connectedUsers[friendId].length > 0) {
+    if (connectedUsers[friendId] && connectedUsers[friendId].size > 0) {
       socket.emit('online_status_update', { userId: friendId, status: 'online' });
     }
   });
 
-
   // ==========================================
-  // 🤝 2. FRIEND CHAT SYSTEM (Real-time)
+  // 🤝 2. FRIEND CHAT SYSTEM
   // ==========================================
   socket.on('send_friend_message', (data) => {
     let receiverSockets = connectedUsers[data.receiver_id];
-    
-    // Agar dost online hai (kisi bhi tab me)
-    if (receiverSockets && receiverSockets.length > 0) {
+    if (receiverSockets && receiverSockets.size > 0) {
       receiverSockets.forEach(socketId => {
         io.to(socketId).emit('receive_friend_message', data);
       });
@@ -72,20 +67,32 @@ io.on('connection', (socket) => {
     if (receiverSockets) receiverSockets.forEach(sId => io.to(sId).emit('friend_stopped_typing', { sender_id: data.sender_id }));
   });
 
-    // ==========================================
-  // 🎭 3. RANDOM CHAT SYSTEM (Super Smooth)
+  // ==========================================
+  // 🎭 3. RANDOM CHAT SYSTEM (Super Smooth & Fast)
   // ==========================================
   socket.on('find_stranger', () => {
     let partnerSocket = null;
+    let partnerId = null;
 
-    // Queue (Line) se zinda (active) partner dhundho
-    while (waitingQueue.length > 0 && !partnerSocket) {
-      let partnerId = waitingQueue.shift(); 
-      partnerSocket = io.sockets.sockets.get(partnerId); 
+    // 🔥 Queue (Line) se zinda partner dhundho (Fastest Way)
+    for (let id of waitingQueue) {
+      let tempSocket = io.sockets.sockets.get(id);
+      if (tempSocket && id !== socket.id) {
+        partnerId = id;
+        partnerSocket = tempSocket;
+        break; // Jaise hi pehla partner mila, loop rok do
+      } else {
+        // Agar purana socket dead hai, toh line se hata do
+        waitingQueue.delete(id);
+      }
     }
 
-    if (partnerSocket && partnerSocket.id !== socket.id) {
-      // 🤝 Match Found! Room banao
+    if (partnerSocket) {
+      // 🤝 Match Found! Line se bahar nikalo
+      waitingQueue.delete(partnerId);
+      waitingQueue.delete(socket.id);
+
+      // Room banao
       let roomName = 'room_' + socket.id + '_' + partnerSocket.id;
       
       socket.join(roomName);
@@ -99,7 +106,7 @@ io.on('connection', (socket) => {
     } 
     else {
       // ⏳ Line me lago
-      waitingQueue.push(socket.id);
+      waitingQueue.add(socket.id);
       socket.emit('waiting_for_stranger', { status: 'waiting', message: 'Looking for a stranger...' });
       console.log(`⏳ Socket ${socket.id} is waiting in Queue.`);
     }
@@ -109,7 +116,6 @@ io.on('connection', (socket) => {
     if (socket.strangerRoom) socket.to(socket.strangerRoom).emit('receive_stranger_message', messageText);
   });
 
-  // 💬 WHATSAPP STYLE TYPING SIGNALS (Backend Logic)
   socket.on('stranger_typing', () => {
     if (socket.strangerRoom) socket.to(socket.strangerRoom).emit('stranger_is_typing');
   });
@@ -118,28 +124,30 @@ io.on('connection', (socket) => {
     if (socket.strangerRoom) socket.to(socket.strangerRoom).emit('stranger_stopped_typing');
   });
 
-  // 🏃‍♂️ JAB KOI "NEXT" DABAYE 
+  // 🏃‍♂️ JAB KOI "NEXT" YA "LEAVE" DABAYE 
   socket.on('skip_stranger', () => {
     if (socket.strangerRoom) {
       let currentRoom = socket.strangerRoom;
 
+      // Partner ko batao ki ye chala gaya
       socket.to(currentRoom).emit('stranger_disconnected', { message: 'Stranger skipped! Finding next...' });
       
-      let roomClients = io.sockets.adapter.rooms.get(currentRoom);
-      if (roomClients) {
-        for (const clientId of roomClients) {
-          let clientSocket = io.sockets.sockets.get(clientId);
-          if (clientSocket) {
-            clientSocket.leave(currentRoom); // Room se bahar nikalo (RAM bachao)
-            clientSocket.strangerRoom = null;
-          }
-        }
-      }
-      socket.leave(currentRoom);
+      // 🔥 RAM Bachao: Ek line me dono ko room se bahar nikal do (Fastest way)
+      io.socketsLeave(currentRoom); 
+      
+      // Variables clear karo
       socket.strangerRoom = null;
+      // Partner ka variable bhi clear karna zaroori hai
+      let roomClients = io.sockets.adapter.rooms.get(currentRoom);
+      if(roomClients){
+         roomClients.forEach(clientId => {
+            let clientSocket = io.sockets.sockets.get(clientId);
+            if(clientSocket) clientSocket.strangerRoom = null;
+         });
+      }
     } else {
       // Agar line me laga tha aur next daba diya, toh line se hatao
-      waitingQueue = waitingQueue.filter(id => id !== socket.id);
+      waitingQueue.delete(socket.id);
     }
   });
 
@@ -151,37 +159,29 @@ io.on('connection', (socket) => {
 
     // 1. Friend Chat Cleanup
     if (socket.userId && connectedUsers[socket.userId]) {
-      connectedUsers[socket.userId] = connectedUsers[socket.userId].filter(id => id !== socket.id);
-      if (connectedUsers[socket.userId].length === 0) {
+      connectedUsers[socket.userId].delete(socket.id);
+      if (connectedUsers[socket.userId].size === 0) {
         delete connectedUsers[socket.userId];
         io.emit('online_status_update', { userId: socket.userId, status: 'offline' });
       }
     }
 
-    // 2. Random Chat Cleanup (Queue se hatao)
-    waitingQueue = waitingQueue.filter(id => id !== socket.id);
+    // 2. Random Chat Cleanup (Queue se hatao - O(1) speed)
+    waitingQueue.delete(socket.id);
     
     // 3. Agar room me tha aur net chala gaya
     if (socket.strangerRoom) {
       let currentRoom = socket.strangerRoom;
       socket.to(currentRoom).emit('stranger_disconnected', { message: 'Stranger left unexpectedly due to network loss.' });
       
-      let roomClients = io.sockets.adapter.rooms.get(currentRoom);
-      if (roomClients) {
-        for (const clientId of roomClients) {
-          let clientSocket = io.sockets.sockets.get(clientId);
-          if (clientSocket) {
-            clientSocket.leave(currentRoom);
-            clientSocket.strangerRoom = null;
-          }
-        }
-      }
+      // Room delete karo RAM se
+      io.socketsLeave(currentRoom);
     }
   });
 
-}); // <-- Ye bracket io.on('connection') ko close kar raha hai
+}); 
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`🔥 VELETIFY ENGINE RUNNING ON PORT ${PORT} 🔥`);
-});  
+});
