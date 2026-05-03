@@ -15,11 +15,8 @@ const io = new Server(server, {
 // ==========================================
 // 🧠 SUPER OPTIMIZED GLOBAL MEMORY 
 // ==========================================
-let connectedUsers = {}; // Friend chat ke liye (Multi-tab support)
-
-// 🔥 Galti Sudhari: Array ki jagah 'Set' use kiya. 
-// Set me lakho users ko add/remove karna instantly hota hai (O(1) time complexity)
-let waitingQueue = new Set(); 
+let connectedUsers = {}; 
+let waitingQueue = new Set(); // O(1) Time Complexity - Fastest for Millions
 
 io.on('connection', (socket) => {
   console.log('🟢 Naya User Connect Hua! ID:', socket.id);
@@ -31,12 +28,11 @@ io.on('connection', (socket) => {
     socket.userId = userId;
     
     if (!connectedUsers[userId]) {
-      connectedUsers[userId] = new Set(); // Yaha bhi Set use kiya fast speed ke liye
+      connectedUsers[userId] = new Set(); 
       io.emit('online_status_update', { userId: userId, status: 'online' });
     }
     
     connectedUsers[userId].add(socket.id);
-    console.log(`User ID ${userId} is Live!`);
   });
 
   socket.on('check_user_status', (friendId) => {
@@ -71,24 +67,32 @@ io.on('connection', (socket) => {
   // 🎭 3. RANDOM CHAT SYSTEM (Super Smooth & Fast)
   // ==========================================
   socket.on('find_stranger', () => {
+    // Agar user pehle se kisi room me hai, toh pehle usko waha se nikalo
+    if (socket.strangerRoom) {
+        socket.leave(socket.strangerRoom);
+        socket.strangerRoom = null;
+    }
+
     let partnerSocket = null;
     let partnerId = null;
 
-    // 🔥 Queue (Line) se zinda partner dhundho (Fastest Way)
+    // 🔥 Queue (Line) se zinda partner dhundho
     for (let id of waitingQueue) {
       let tempSocket = io.sockets.sockets.get(id);
+      
+      // Check karo ki socket zinda hai aur khud se connect nahi ho raha
       if (tempSocket && id !== socket.id) {
         partnerId = id;
         partnerSocket = tempSocket;
-        break; // Jaise hi pehla partner mila, loop rok do
-      } else {
-        // Agar purana socket dead hai, toh line se hata do
+        break; 
+      } else if (!tempSocket) {
+        // Dead socket ko line se hatao (RAM bachao)
         waitingQueue.delete(id);
       }
     }
 
     if (partnerSocket) {
-      // 🤝 Match Found! Line se bahar nikalo
+      // 🤝 Match Found! Dono ko line se bahar nikalo
       waitingQueue.delete(partnerId);
       waitingQueue.delete(socket.id);
 
@@ -102,13 +106,12 @@ io.on('connection', (socket) => {
       partnerSocket.strangerRoom = roomName;
       
       io.to(roomName).emit('stranger_matched', { status: 'success', message: 'Stranger connected! Say Hi 👋' });
-      console.log(`✅ Match done in room: ${roomName}`);
+      console.log(`✅ Match done: ${roomName}`);
     } 
     else {
       // ⏳ Line me lago
       waitingQueue.add(socket.id);
       socket.emit('waiting_for_stranger', { status: 'waiting', message: 'Looking for a stranger...' });
-      console.log(`⏳ Socket ${socket.id} is waiting in Queue.`);
     }
   });
 
@@ -129,22 +132,21 @@ io.on('connection', (socket) => {
     if (socket.strangerRoom) {
       let currentRoom = socket.strangerRoom;
 
-      // Partner ko batao ki ye chala gaya
+      // 1. Partner ko batao ki ye chala gaya
       socket.to(currentRoom).emit('stranger_disconnected', { message: 'Stranger skipped! Finding next...' });
       
-      // 🔥 RAM Bachao: Ek line me dono ko room se bahar nikal do (Fastest way)
-      io.socketsLeave(currentRoom); 
-      
-      // Variables clear karo
-      socket.strangerRoom = null;
-      // Partner ka variable bhi clear karna zaroori hai
+      // 2. 🔥 BUG FIXED: Room destroy karne se PEHLE partner ka variable clear karo
       let roomClients = io.sockets.adapter.rooms.get(currentRoom);
       if(roomClients){
          roomClients.forEach(clientId => {
             let clientSocket = io.sockets.sockets.get(clientId);
-            if(clientSocket) clientSocket.strangerRoom = null;
+            if(clientSocket) clientSocket.strangerRoom = null; // Dono ka variable null ho jayega
          });
       }
+
+      // 3. Ab RAM se room ko hamesha ke liye uda do (Fastest way)
+      io.socketsLeave(currentRoom); 
+      
     } else {
       // Agar line me laga tha aur next daba diya, toh line se hatao
       waitingQueue.delete(socket.id);
@@ -166,14 +168,25 @@ io.on('connection', (socket) => {
       }
     }
 
-    // 2. Random Chat Cleanup (Queue se hatao - O(1) speed)
+    // 2. Random Chat Cleanup (Queue se hatao)
     waitingQueue.delete(socket.id);
     
-    // 3. Agar room me tha aur net chala gaya
+    // 3. Agar room me tha aur net chala gaya (BUG FIXED HERE TOO)
     if (socket.strangerRoom) {
       let currentRoom = socket.strangerRoom;
       socket.to(currentRoom).emit('stranger_disconnected', { message: 'Stranger left unexpectedly due to network loss.' });
       
+      // Room destroy karne se pehle partner ka variable clear karo
+      let roomClients = io.sockets.adapter.rooms.get(currentRoom);
+      if(roomClients){
+         roomClients.forEach(clientId => {
+            let clientSocket = io.sockets.sockets.get(clientId);
+            if(clientSocket && clientSocket.id !== socket.id) {
+                clientSocket.strangerRoom = null;
+            }
+         });
+      }
+
       // Room delete karo RAM se
       io.socketsLeave(currentRoom);
     }
