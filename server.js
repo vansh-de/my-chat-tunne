@@ -15,22 +15,23 @@ const io = new Server(server, {
 // ==========================================
 // 🧠 SUPER OPTIMIZED GLOBAL MEMORY 
 // ==========================================
-const connectedUsers = new Map(); // Map is faster than Object for dynamic keys
+const connectedUsers = new Map(); // 🔥 Wapas Map lagaya (Super Fast)
 const waitingQueue = new Set();   // O(1) Time Complexity
 
 io.on('connection', (socket) => {
   console.log('🟢 Naya User Connect Hua! ID:', socket.id);
 
   // ==========================================
-  // 🤝 1. FRIEND CHAT SYSTEM
+  // 🟢 1. LIVE ONLINE / OFFLINE SYSTEM (Friend Chat)
   // ==========================================
   socket.on('user_connected', (userId) => {
-    socket.userId = userId;
+    socket.data.userId = userId; // 🔥 socket.data ka use kiya (Best Practice)
     
     if (!connectedUsers.has(userId)) {
       connectedUsers.set(userId, new Set()); 
       io.emit('online_status_update', { userId: userId, status: 'online' });
     }
+    
     connectedUsers.get(userId).add(socket.id);
   });
 
@@ -40,105 +41,112 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ==========================================
+  // 🤝 2. FRIEND CHAT SYSTEM
+  // ==========================================
   socket.on('send_friend_message', (data) => {
     let receiverSockets = connectedUsers.get(data.receiver_id);
-    if (receiverSockets) {
+    if (receiverSockets && receiverSockets.size > 0) {
       receiverSockets.forEach(socketId => {
         io.to(socketId).emit('receive_friend_message', data);
       });
     }
   });
 
+  socket.on('friend_typing', (data) => {
+    let receiverSockets = connectedUsers.get(data.receiver_id);
+    if (receiverSockets) receiverSockets.forEach(sId => io.to(sId).emit('friend_is_typing', { sender_id: data.sender_id }));
+  });
+
+  socket.on('friend_stop_typing', (data) => {
+    let receiverSockets = connectedUsers.get(data.receiver_id);
+    if (receiverSockets) receiverSockets.forEach(sId => io.to(sId).emit('friend_stopped_typing', { sender_id: data.sender_id }));
+  });
+
   // ==========================================
-  // 🎭 2. RANDOM CHAT SYSTEM (Ultra Fast)
+  // 🎭 3. RANDOM CHAT SYSTEM (Super Smooth & Fast)
   // ==========================================
   socket.on('find_stranger', () => {
-    // 1. Agar pehle se room mein hai, toh bahar nikalo (RAM bachao)
-    if (socket.strangerRoom) {
-        socket.leave(socket.strangerRoom);
-        socket.strangerRoom = null;
+    // 1. Agar user pehle se kisi room me hai, toh waha se nikalo
+    if (socket.data.strangerRoom) {
+        socket.leave(socket.data.strangerRoom);
+        socket.data.strangerRoom = null;
     }
 
-    // 2. Agar user pehle se line mein hai, toh wapas add mat karo (Spam protection)
+    // 2. 🔥 SPAM PROTECTION: Agar pehle se line me hai toh wapas add mat karo
     if (waitingQueue.has(socket.id)) return;
 
-    let partnerId = null;
     let partnerSocket = null;
+    let partnerId = null;
 
-    // 🔥 FASTEST WAY TO GET FIRST PERSON FROM QUEUE (O(1) Logic)
+    // 🔥 Queue (Line) se zinda partner dhundho
     for (let id of waitingQueue) {
       let tempSocket = io.sockets.sockets.get(id);
       
       if (tempSocket && id !== socket.id) {
         partnerId = id;
         partnerSocket = tempSocket;
-        break; // Jaise hi pehla zinda banda mila, loop tod do!
-      } else {
-        // Agar socket dead hai, toh kachra saaf karo
+        break; 
+      } else if (!tempSocket) {
         waitingQueue.delete(id);
       }
     }
 
     if (partnerSocket) {
-      // 🤝 MATCH FOUND! Dono ko line se hatao
+      // 🤝 Match Found! Dono ko line se bahar nikalo
       waitingQueue.delete(partnerId);
       waitingQueue.delete(socket.id);
 
       // Room banao (Unique ID)
-      let roomName = 'room_' + Date.now() + '_' + socket.id; 
+      let roomName = 'room_' + Date.now() + '_' + socket.id;
       
       socket.join(roomName);
       partnerSocket.join(roomName);
       
-      socket.strangerRoom = roomName;
-      partnerSocket.strangerRoom = roomName;
+      // 🔥 socket.data ka use kiya
+      socket.data.strangerRoom = roomName;
+      partnerSocket.data.strangerRoom = roomName;
       
-      // Dono ko batao ki match ho gaya
       io.to(roomName).emit('stranger_matched', { status: 'success', message: 'Stranger connected! Say Hi 👋' });
       console.log(`✅ Match done: ${roomName}`);
     } 
     else {
-      // ⏳ Koi nahi mila, toh line mein lag jao
+      // ⏳ Line me lago
       waitingQueue.add(socket.id);
       socket.emit('waiting_for_stranger', { status: 'waiting', message: 'Looking for a stranger...' });
     }
   });
 
   socket.on('send_stranger_message', (messageText) => {
-    if (socket.strangerRoom) {
-        socket.to(socket.strangerRoom).emit('receive_stranger_message', messageText);
-    }
+    if (socket.data.strangerRoom) socket.to(socket.data.strangerRoom).emit('receive_stranger_message', messageText);
   });
 
   socket.on('stranger_typing', () => {
-    if (socket.strangerRoom) socket.to(socket.strangerRoom).emit('stranger_is_typing');
+    if (socket.data.strangerRoom) socket.to(socket.data.strangerRoom).emit('stranger_is_typing');
   });
 
   socket.on('stranger_stop_typing', () => {
-    if (socket.strangerRoom) socket.to(socket.strangerRoom).emit('stranger_stopped_typing');
+    if (socket.data.strangerRoom) socket.to(socket.data.strangerRoom).emit('stranger_stopped_typing');
   });
 
   // ==========================================
-  // 🏃‍♂️ 3. SKIP / LEAVE LOGIC (Next Button)
+  // 🏃‍♂️ 4. SKIP / LEAVE LOGIC (Next Button)
   // ==========================================
-  socket.on('skip_stranger', () => {
-    if (socket.strangerRoom) {
-      let currentRoom = socket.strangerRoom;
+  socket.on('skip_stranger', async () => {
+    if (socket.data.strangerRoom) {
+      let currentRoom = socket.data.strangerRoom;
 
       // 1. Partner ko batao ki ye chala gaya
       socket.to(currentRoom).emit('stranger_disconnected', { message: 'Stranger skipped! Finding next...' });
       
-      // 2. Partner ka variable clear karo taaki wo naya match dhundh sake
-      let roomClients = io.sockets.adapter.rooms.get(currentRoom);
-      if(roomClients){
-         roomClients.forEach(clientId => {
-            let clientSocket = io.sockets.sockets.get(clientId);
-            if(clientSocket) clientSocket.strangerRoom = null; 
-         });
+      // 2. 🔥 BUG FIXED: Modern v4 way with socket.data
+      const socketsInRoom = await io.in(currentRoom).fetchSockets();
+      for (const s of socketsInRoom) {
+          s.data.strangerRoom = null; // Ab ye 100% kaam karega!
       }
 
-      // 3. Room ko RAM se hamesha ke liye uda do
-      io.socketsLeave(currentRoom); 
+      // 3. Ab RAM se room ko hamesha ke liye uda do
+      io.in(currentRoom).socketsLeave(currentRoom); 
       
     } else {
       // Agar line me laga tha aur next daba diya, toh line se hatao
@@ -147,19 +155,20 @@ io.on('connection', (socket) => {
   });
 
   // ==========================================
-  // 🛑 4. DISCONNECT LOGIC (Net Off / Tab Close)
+  // 🛑 5. DISCONNECT LOGIC (Net Off / Tab Close)
   // ==========================================
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log('🔴 User Chala Gaya ID:', socket.id);
 
     // 1. Friend Chat Cleanup
-    if (socket.userId && connectedUsers.has(socket.userId)) {
-      let userSockets = connectedUsers.get(socket.userId);
+    let userId = socket.data.userId;
+    if (userId && connectedUsers.has(userId)) {
+      let userSockets = connectedUsers.get(userId);
       userSockets.delete(socket.id);
       
       if (userSockets.size === 0) {
-        connectedUsers.delete(socket.userId);
-        io.emit('online_status_update', { userId: socket.userId, status: 'offline' });
+        connectedUsers.delete(userId);
+        io.emit('online_status_update', { userId: userId, status: 'offline' });
       }
     }
 
@@ -167,25 +176,20 @@ io.on('connection', (socket) => {
     waitingQueue.delete(socket.id);
     
     // 3. Agar room me tha aur net chala gaya
-    if (socket.strangerRoom) {
-      let currentRoom = socket.strangerRoom;
+    if (socket.data.strangerRoom) {
+      let currentRoom = socket.data.strangerRoom;
+      socket.to(currentRoom).emit('stranger_disconnected', { message: 'Stranger left unexpectedly due to network loss.' });
       
-      // Partner ko message bhejo
-      socket.to(currentRoom).emit('stranger_disconnected', { message: 'Stranger left unexpectedly.' });
-      
-      // Partner ka variable clear karo
-      let roomClients = io.sockets.adapter.rooms.get(currentRoom);
-      if(roomClients){
-         roomClients.forEach(clientId => {
-            let clientSocket = io.sockets.sockets.get(clientId);
-            if(clientSocket && clientSocket.id !== socket.id) {
-                clientSocket.strangerRoom = null;
-            }
-         });
+      // Room destroy karne se pehle partner ka variable clear karo
+      const socketsInRoom = await io.in(currentRoom).fetchSockets();
+      for (const s of socketsInRoom) {
+          if (s.id !== socket.id) {
+              s.data.strangerRoom = null;
+          }
       }
 
       // Room delete karo RAM se
-      io.socketsLeave(currentRoom);
+      io.in(currentRoom).socketsLeave(currentRoom);
     }
   });
 
